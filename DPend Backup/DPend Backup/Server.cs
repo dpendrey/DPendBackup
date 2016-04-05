@@ -325,7 +325,7 @@ namespace DPend_Backup
 
                 if (System.Threading.Thread.CurrentThread == workerThreads.First.Value)
                 {
-                    if (numDirs > 0 && numDirs < curPlan.NumberWorkers * 2 && numFiles < curPlan.NumberWorkers * 2)
+                    if (numDirs > 0 && ((numDirs < curPlan.NumberWorkers * 2 && numFiles < curPlan.NumberWorkers * 2) || (numFiles < 1000)))
                     {
                         pathToRun = dirs.Last.Value;
                         dirs.RemoveLast();
@@ -357,6 +357,7 @@ namespace DPend_Backup
                 }
             }
             #endregion
+
             while (stat != DPend_Backup.Status.Stopping &&
                 (numDirs > 0 || numFiles > 0))
             {
@@ -376,29 +377,39 @@ namespace DPend_Backup
                         if (!System.IO.Directory.Exists(iDst.DirectoryName))
                             System.IO.Directory.CreateDirectory(iDst.DirectoryName);
 
-                        System.IO.FileStream read = new System.IO.FileStream(src, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read);
-                        System.IO.FileStream write = new System.IO.FileStream(dst,
-                            System.IO.FileMode.OpenOrCreate,
-                            System.IO.FileAccess.ReadWrite,
-                            System.IO.FileShare.None,
-                            256);
-                        byte[] buff = new byte[256];
-                        int numRead = read.Read(buff, 0, buff.Length);
-                        while (numRead > 0)
+                        try
                         {
-                            write.Write(buff, 0, numRead);
-                            bytesCopied += numRead;
-                            numRead = read.Read(buff, 0, buff.Length);
+                            System.IO.FileStream read = new System.IO.FileStream(src, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read);
+                            System.IO.FileStream write = new System.IO.FileStream(dst,
+                                System.IO.FileMode.OpenOrCreate,
+                                System.IO.FileAccess.ReadWrite,
+                                System.IO.FileShare.None,
+                                256);
+                            byte[] buff = new byte[4096];
+                            int numRead = read.Read(buff, 0, buff.Length);
+                            while (numRead > 0 && stat != DPend_Backup.Status.Stopping)
+                            {
+                                write.Write(buff, 0, numRead);
+                                bytesCopied += numRead;
+                                numRead = read.Read(buff, 0, buff.Length);
+                            }
+
+                            filesCopied++;
+                            write.Flush();
+                            write.Close();
+                            read.Close();
+
+                            if (stat != DPend_Backup.Status.Stopping)
+                            {
+                                System.IO.File.SetLastWriteTimeUtc(dst, iSrc.LastWriteTimeUtc);
+                                System.IO.File.SetAttributes(dst, iSrc.Attributes);
+                                System.IO.File.SetCreationTimeUtc(dst, iSrc.CreationTimeUtc);
+                            }
                         }
+                        catch (Exception)
+                        {
 
-                        filesCopied++;
-                        write.Flush();
-                        write.Close();
-                        read.Close();
-
-                        System.IO.File.SetLastWriteTimeUtc(dst, iSrc.LastWriteTimeUtc);
-                        System.IO.File.SetAttributes(dst, iSrc.Attributes);
-                        System.IO.File.SetCreationTimeUtc(dst, iSrc.CreationTimeUtc);
+                        }
                     }
 
                     filesChecked++;
@@ -414,97 +425,105 @@ namespace DPend_Backup
                     string[] tmp;
 
                     #region Scan directories
-                    tmp = System.IO.Directory.GetDirectories(src);
-                    for (int i = 0; i < tmp.Length; i++)
+                    try
                     {
-                        if (tmp[i].StartsWith(curPlan.Source))
+                        tmp = System.IO.Directory.GetDirectories(src);
+                        for (int i = 0; i < tmp.Length; i++)
                         {
-                            tmp[i] = tmp[i].Substring(curPlan.Source.Length);
+                            if (tmp[i].StartsWith(curPlan.Source))
+                            {
+                                tmp[i] = tmp[i].Substring(curPlan.Source.Length);
 
-                            bool allowScan = false;
-                            foreach (string filter in curPlan.AllowDirs)
-                            {
-                                if (CompareWildcard(tmp[i], filter))
-                                {
-                                    allowScan = true;
-                                    break;
-                                }
-                            }
-                            if (allowScan)
-                            {
-                                foreach (string filter in curPlan.BlockDirs)
+                                bool allowScan = false;
+                                foreach (string filter in curPlan.AllowDirs)
                                 {
                                     if (CompareWildcard(tmp[i], filter))
                                     {
-                                        allowScan = false;
+                                        allowScan = true;
                                         break;
                                     }
                                 }
-
                                 if (allowScan)
                                 {
-                                    lock (plans)
-                                        dirs.AddLast(tmp[i]);
+                                    foreach (string filter in curPlan.BlockDirs)
+                                    {
+                                        if (CompareWildcard(tmp[i], filter))
+                                        {
+                                            allowScan = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if (allowScan)
+                                    {
+                                        lock (plans)
+                                            dirs.AddLast(tmp[i]);
+                                    }
                                 }
                             }
-                        }
-                        else
-                        {
-                            System.Windows.Forms.MessageBox.Show("How do we have a directory that's not in its parent?");
+                            else
+                            {
+                                System.Windows.Forms.MessageBox.Show("How do we have a directory that's not in its parent?");
+                            }
                         }
                     }
+                    catch (Exception) { }
                     #endregion
 
                     #region Scan files
-                    tmp = System.IO.Directory.GetFiles(src);
-                    for (int i = 0; i < tmp.Length; i++)
+                    try
                     {
-                        if (tmp[i].StartsWith(curPlan.Source))
+                        tmp = System.IO.Directory.GetFiles(src);
+                        for (int i = 0; i < tmp.Length; i++)
                         {
-                            tmp[i] = tmp[i].Substring(curPlan.Source.Length);
-                            if (tmp[i] == null)
+                            if (tmp[i].StartsWith(curPlan.Source))
                             {
-                            }
-
-                            bool allowScan = false;
-                            foreach (string filter in curPlan.AllowFiles)
-                            {
-                                if (CompareWildcard(tmp[i], filter))
+                                tmp[i] = tmp[i].Substring(curPlan.Source.Length);
+                                if (tmp[i] == null)
                                 {
-                                    allowScan = true;
-                                    break;
                                 }
-                            }
-                            if (allowScan)
-                            {
-                                foreach (string filter in curPlan.BlockFiles)
+
+                                bool allowScan = false;
+                                foreach (string filter in curPlan.AllowFiles)
                                 {
                                     if (CompareWildcard(tmp[i], filter))
                                     {
-                                        allowScan = false;
+                                        allowScan = true;
                                         break;
                                     }
                                 }
-
                                 if (allowScan)
                                 {
-                                    if (tmp[i] == null)
+                                    foreach (string filter in curPlan.BlockFiles)
                                     {
+                                        if (CompareWildcard(tmp[i], filter))
+                                        {
+                                            allowScan = false;
+                                            break;
+                                        }
                                     }
-                                    lock (plans)
-                                        files.AddLast(tmp[i]);
-                                    if (files.Last == null)
+
+                                    if (allowScan)
                                     {
+                                        if (tmp[i] == null)
+                                        {
+                                        }
+                                        lock (plans)
+                                            files.AddLast(tmp[i]);
+                                        if (files.Last == null)
+                                        {
+                                        }
                                     }
                                 }
-                            }
 
-                        }
-                        else
-                        {
-                            System.Windows.Forms.MessageBox.Show("How do we have a file that's not in its parent?");
+                            }
+                            else
+                            {
+                                System.Windows.Forms.MessageBox.Show("How do we have a file that's not in its parent?");
+                            }
                         }
                     }
+                    catch (Exception) { }
                     #endregion
                     #endregion
                 }
@@ -518,7 +537,7 @@ namespace DPend_Backup
 
                     if (System.Threading.Thread.CurrentThread == workerThreads.First.Value)
                     {
-                        if (numDirs > 0 && numDirs < curPlan.NumberWorkers * 2 && numFiles < curPlan.NumberWorkers * 2)
+                        if (numDirs > 0 && ((numDirs < curPlan.NumberWorkers * 2 && numFiles < curPlan.NumberWorkers * 2) || (numFiles < 1000)))
                         {
                             pathToRun = dirs.Last.Value;
                             dirs.RemoveLast();

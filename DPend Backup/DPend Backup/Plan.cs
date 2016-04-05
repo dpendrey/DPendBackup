@@ -11,6 +11,7 @@ namespace DPend_Backup
     public class Plan
     {
         private string name, source, dest;
+        private LocationType sourceType = LocationType.Directory, destType = LocationType.Directory;
         private string[] allowFiles = new string[] { "*.*" };
         private string[] blockFiles = new string[0];
         private string[] allowDirs = new string[] { "*" };
@@ -39,6 +40,14 @@ namespace DPend_Backup
         /// Gets/sets the destination for this plan
         /// </summary>
         public string Destination { get { return dest; } set { dest = value; } }
+        /// <summary>
+        /// Gets/sets the type of source
+        /// </summary>
+        public LocationType SourceType { get { return sourceType; } set { sourceType = value; } }
+        /// <summary>
+        /// Gets/sets the type of destination
+        /// </summary>
+        public LocationType DestinationType { get { return destType; } set { destType = value; } }
 
         /// <summary>
         /// Gets the allow list
@@ -155,6 +164,11 @@ namespace DPend_Backup
         {
             get
             {
+                // We cannot acces either the source of the destination, so we don't really need to run right now
+                if (!System.IO.Directory.Exists(source) ||
+                    !System.IO.Directory.Exists(dest))
+                    return false;
+
                 switch (status)
                 {
                     case PlanStatus.OK:
@@ -225,6 +239,8 @@ namespace DPend_Backup
                 if (curLine.ToUpper().StartsWith("FILESTOKEEP=")) filesToKeep = int.Parse(curLine.Substring("FILESTOKEEP=".Length));
                 if (curLine.ToUpper().StartsWith("WORKERS=")) numWorkers = int.Parse(curLine.Substring("WORKERS=".Length));
                 if (curLine.ToUpper().StartsWith("STATUS=")) status = (PlanStatus)int.Parse(curLine.Substring("STATUS=".Length));
+                if (curLine.ToUpper().StartsWith("SOURCETYPE=")) sourceType =(LocationType)int.Parse( curLine.Substring("SOURCETYPE=".Length));
+                if (curLine.ToUpper().StartsWith("DESTINATIONTYPE=")) destType = (LocationType)int.Parse( curLine.Substring("DESTINATIONTYPE=".Length));
 
 
                 if (curLine.ToUpper() == "[END PLAN]")
@@ -239,6 +255,8 @@ namespace DPend_Backup
             Writer.WriteLine("Name=" + name);
             Writer.WriteLine("Source=" + source);
             Writer.WriteLine("Destination=" + dest);
+            Writer.WriteLine("SourceType=" + ((int)sourceType).ToString());
+            Writer.WriteLine("DestinationType=" + ((int)destType).ToString());
             foreach (string tmp in allowFiles)
                 Writer.WriteLine("AllowFile=" + tmp);
             foreach (string tmp in blockFiles)

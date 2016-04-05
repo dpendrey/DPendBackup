@@ -59,7 +59,7 @@ namespace DPend_Backup
 
 
                 if (status.BytesCopied > 1024 * 1024 * 1024)
-                    build.AppendLine("Copied " + status.FilesCopied.ToString() + " worth " + (status.BytesCopied / (1024 * 1024 * 1024.0)).ToString("0.00") + "GB");
+                    build.AppendLine("Copied " + status.FilesCopied.ToString() + " worth " + (status.BytesCopied / (1024 * 1024 * 1024.0)).ToString("0.00000") + "GB");
                 else if (status.BytesCopied > 1024 * 1024)
                     build.AppendLine("Copied " + status.FilesCopied.ToString() + " worth " + (status.BytesCopied / (1024 * 1024.0)).ToString("0.00") + "MB");
                 else if (status.BytesCopied > 1024)
