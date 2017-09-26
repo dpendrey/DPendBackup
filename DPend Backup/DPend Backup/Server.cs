@@ -12,7 +12,8 @@ namespace DPend_Backup
         private static List<Plan> plans = new List<Plan>();
         private static Plan curPlan = null;
         private static Status status = DPend_Backup.Status.Stopped;
-        private static long filesChecked, bytesChecked, filesCopied, bytesCopied;
+        private static PlanExecutionStatus executionStatus = new PlanExecutionStatus();
+        private static DestTypes.DestType destinationType = null;
 
         /// <summary>
         /// Gets the complete list of current plans
@@ -49,7 +50,7 @@ namespace DPend_Backup
             {
                 SystemStatus retVal;
                 lock (plans)
-                    retVal = new SystemStatus(status, curPlan, workerThreads.Count, filesChecked, bytesChecked, filesCopied, bytesCopied, files.Count, dirs.Count);
+                    retVal = new SystemStatus(status, curPlan, workerThreads.Count, executionStatus.FilesScanned, executionStatus.BytesScanned, executionStatus.FilesCopied, executionStatus.BytesCopied, files.Count, dirs.Count);
                 return retVal;
             }
         }
@@ -117,7 +118,7 @@ namespace DPend_Backup
         private static void runWorker()
         {
             Status stat;
-            int curPlan = 0;
+            int planIndex = 0;
 
             #region Load list of plans
             string oldFile = System.IO.Path.Combine(
@@ -206,14 +207,16 @@ namespace DPend_Backup
                 Plan p;
                 lock (plans)
                 {
-                    if (curPlan >= plans.Count)
+                    if (curPlan != null)
+                        p = null;
+                    else if (planIndex >= plans.Count)
                     {
-                        curPlan = 0;
+                        planIndex = 0;
                         p = null;
                     }
                     else
                     {
-                        p = plans[curPlan++];
+                        p = plans[planIndex++];
                     }
                 }
                 #endregion
@@ -244,15 +247,25 @@ namespace DPend_Backup
             dirs = new LinkedList<string>();
             files = new LinkedList<string>();
 
+            Plan.Status = PlanStatus.Running;
+            Plan.LastAttmpted = DateTime.Now;
+
             dirs.AddLast(Plan.Source);
 
-            filesChecked =
-                bytesChecked =
-                filesCopied =
-                bytesCopied =
-                0;
-
             curPlan = Plan;
+            executionStatus = new PlanExecutionStatus();
+            switch (Plan.DestinationType)
+            {
+                case LocationType.Directory:
+                    destinationType = new DestTypes.Directory();
+                    break;
+                case LocationType.CompressedDirectory:
+                    destinationType = new DestTypes.DirectoryCompressed();
+                    break;
+                default:
+                    System.Windows.Forms.MessageBox.Show("Ah! Unknown destination type!");
+                    throw new Exception();
+            }
 
             int numFiles, numDirs;
             Status stat;
@@ -266,7 +279,7 @@ namespace DPend_Backup
             }
             #endregion
             while (stat != DPend_Backup.Status.Stopping &&
-                (numDirs > 0 || numFiles > 0))
+                (numDirs > 0 || numFiles > 0|| workerThreads.Count > 0))
             {
                 #region Trim worker thread list
                 LinkedListNode<System.Threading.Thread> node = workerThreads.First;
@@ -308,7 +321,20 @@ namespace DPend_Backup
                 #endregion
             }
 
-            SaveSettings();
+            if (numDirs == 0 && numFiles == 0&& workerThreads.Count==0)
+            {
+                Plan.LastRun = Plan.LastAttmpted;
+                Plan.Status = PlanStatus.OK;
+
+                SaveSettings();
+                lock (plans)
+                {
+                    if (curPlan == Plan)
+                        curPlan = null;
+                    else
+                        stat = DPend_Backup.Status.Stopping;
+                }
+            }
         }
         private static void runBackupWorker()
         {
@@ -323,7 +349,7 @@ namespace DPend_Backup
                 numDirs = dirs.Count;
                 stat = status;
 
-                if (System.Threading.Thread.CurrentThread == workerThreads.First.Value)
+                if (workerThreads.First!=null&&System.Threading.Thread.CurrentThread == workerThreads.First.Value)
                 {
                     if (numDirs > 0 && ((numDirs < curPlan.NumberWorkers * 2 && numFiles < curPlan.NumberWorkers * 2) || (numFiles < 1000)))
                     {
@@ -361,171 +387,23 @@ namespace DPend_Backup
             while (stat != DPend_Backup.Status.Stopping &&
                 (numDirs > 0 || numFiles > 0))
             {
-                if (numFiles > 0)
+                if (numDirs > 0)
                 {
-                    #region Save file
-                    string src = System.IO.Path.Combine(curPlan.Source, pathToRun);
-                    string dst = System.IO.Path.Combine(curPlan.Destination, pathToRun);
-                    System.IO.FileInfo iSrc = new System.IO.FileInfo(src),
-                        iDst = new System.IO.FileInfo(dst);
-
-                    // If the file doesn't exist or has a different time
-                    if (!iDst.Exists ||
-                        iSrc.LastWriteTimeUtc > iDst.LastWriteTimeUtc ||
-                        iSrc.Length != iDst.Length)
-                    {
-                        if (!System.IO.Directory.Exists(iDst.DirectoryName))
-                            System.IO.Directory.CreateDirectory(iDst.DirectoryName);
-
-                        try
+                    List<string> dirsToAdd = new List<string>(),
+                        filesToAdd = new List<string>();
+                    destinationType.SaveDirectory(curPlan, executionStatus, pathToRun, dirsToAdd, filesToAdd);
+                    if (dirsToAdd.Count > 0 || filesToAdd.Count > 0)
+                        lock (plans)
                         {
-                            System.IO.FileStream read = new System.IO.FileStream(src, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read);
-                            System.IO.FileStream write = new System.IO.FileStream(dst,
-                                System.IO.FileMode.OpenOrCreate,
-                                System.IO.FileAccess.ReadWrite,
-                                System.IO.FileShare.None,
-                                256);
-                            byte[] buff = new byte[4096];
-                            int numRead = read.Read(buff, 0, buff.Length);
-                            while (numRead > 0 && stat != DPend_Backup.Status.Stopping)
-                            {
-                                write.Write(buff, 0, numRead);
-                                bytesCopied += numRead;
-                                numRead = read.Read(buff, 0, buff.Length);
-                            }
-
-                            filesCopied++;
-                            write.Flush();
-                            write.Close();
-                            read.Close();
-
-                            if (stat != DPend_Backup.Status.Stopping)
-                            {
-                                System.IO.File.SetLastWriteTimeUtc(dst, iSrc.LastWriteTimeUtc);
-                                System.IO.File.SetAttributes(dst, iSrc.Attributes);
-                                System.IO.File.SetCreationTimeUtc(dst, iSrc.CreationTimeUtc);
-                            }
+                            for (int i = 0; i < dirsToAdd.Count; i++)
+                                dirs.AddLast(dirsToAdd[i]);
+                            for (int i = 0; i < filesToAdd.Count; i++)
+                                files.AddLast(filesToAdd[i]);
                         }
-                        catch (Exception)
-                        {
-
-                        }
-                    }
-
-                    filesChecked++;
-                    bytesChecked += iSrc.Length;
-                    #endregion
                 }
-                else if (numDirs > 0)
+                else if (numFiles > 0)
                 {
-                    #region Scan dir
-                    string src = System.IO.Path.Combine(curPlan.Source, pathToRun);
-                    string dst = System.IO.Path.Combine(curPlan.Destination, pathToRun);
-
-                    string[] tmp;
-
-                    #region Scan directories
-                    try
-                    {
-                        tmp = System.IO.Directory.GetDirectories(src);
-                        for (int i = 0; i < tmp.Length; i++)
-                        {
-                            if (tmp[i].StartsWith(curPlan.Source))
-                            {
-                                tmp[i] = tmp[i].Substring(curPlan.Source.Length);
-
-                                bool allowScan = false;
-                                foreach (string filter in curPlan.AllowDirs)
-                                {
-                                    if (CompareWildcard(tmp[i], filter))
-                                    {
-                                        allowScan = true;
-                                        break;
-                                    }
-                                }
-                                if (allowScan)
-                                {
-                                    foreach (string filter in curPlan.BlockDirs)
-                                    {
-                                        if (CompareWildcard(tmp[i], filter))
-                                        {
-                                            allowScan = false;
-                                            break;
-                                        }
-                                    }
-
-                                    if (allowScan)
-                                    {
-                                        lock (plans)
-                                            dirs.AddLast(tmp[i]);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                System.Windows.Forms.MessageBox.Show("How do we have a directory that's not in its parent?");
-                            }
-                        }
-                    }
-                    catch (Exception) { }
-                    #endregion
-
-                    #region Scan files
-                    try
-                    {
-                        tmp = System.IO.Directory.GetFiles(src);
-                        for (int i = 0; i < tmp.Length; i++)
-                        {
-                            if (tmp[i].StartsWith(curPlan.Source))
-                            {
-                                tmp[i] = tmp[i].Substring(curPlan.Source.Length);
-                                if (tmp[i] == null)
-                                {
-                                }
-
-                                bool allowScan = false;
-                                foreach (string filter in curPlan.AllowFiles)
-                                {
-                                    if (CompareWildcard(tmp[i], filter))
-                                    {
-                                        allowScan = true;
-                                        break;
-                                    }
-                                }
-                                if (allowScan)
-                                {
-                                    foreach (string filter in curPlan.BlockFiles)
-                                    {
-                                        if (CompareWildcard(tmp[i], filter))
-                                        {
-                                            allowScan = false;
-                                            break;
-                                        }
-                                    }
-
-                                    if (allowScan)
-                                    {
-                                        if (tmp[i] == null)
-                                        {
-                                        }
-                                        lock (plans)
-                                            files.AddLast(tmp[i]);
-                                        if (files.Last == null)
-                                        {
-                                        }
-                                    }
-                                }
-
-                            }
-                            else
-                            {
-                                System.Windows.Forms.MessageBox.Show("How do we have a file that's not in its parent?");
-                            }
-                        }
-                    }
-                    catch (Exception) { }
-                    #endregion
-                    #endregion
+                    destinationType.SaveFile(curPlan, executionStatus, pathToRun);
                 }
 
                 #region Get info on next thing to run
@@ -571,93 +449,5 @@ namespace DPend_Backup
                 #endregion
             }
         }
-
-
-        #region IsLike
-        /// <summary>
-        /// Compares wildcard to string
-        /// </summary>
-        /// <param name="WildString">String to compare</param>
-        /// <param name="Mask">Wildcard mask (ex: *.jpg)</param>
-        /// <returns>True if match found</returns>
-        public static bool CompareWildcard(string WildString, string Mask, bool IgnoreCase = true)
-        {
-            int i = 0, k = 0;
-
-            i = WildString.LastIndexOf('/');
-            if (i > -1)
-                WildString = WildString.Substring(i + 1);
-            i = WildString.LastIndexOf('\\');
-            if (i > -1)
-                WildString = WildString.Substring(i + 1);
-            i = 0;
-
-            // Cannot continue with Mask empty
-            if (string.IsNullOrEmpty(Mask))
-                return false;
-
-            // If WildString is null -> make it an empty string
-            if (WildString == null)
-                WildString = string.Empty;
-
-            // If Mask is * and WildString isn't empty -> return true
-            if (string.Compare(Mask, "*") == 0 && !string.IsNullOrEmpty(WildString))
-                return true;
-
-            // If Mask is ? and WildString length is 1 -> return true
-            if (string.Compare(Mask, "?") == 0 && WildString.Length == 1)
-                return true;
-
-            // If WildString and Mask match -> no need to go any further
-            if (string.Compare(WildString, Mask, IgnoreCase) == 0)
-                return true;
-
-            while (k != WildString.Length)
-            {
-                switch (Mask[i])
-                {
-                    case '*':
-
-                        if ((i + 1) == Mask.Length)
-                            return true;
-
-                        while (k != WildString.Length)
-                        {
-                            if (CompareWildcard(WildString.Substring(k + 1), Mask.Substring(i + 1), IgnoreCase))
-                                return true;
-
-                            k += 1;
-                        }
-
-                        return false;
-
-                    case '?':
-
-                        break;
-
-                    default:
-
-                        if (IgnoreCase == false && WildString[k] != Mask[i])
-                            return false;
-
-                        if (IgnoreCase && Char.ToLower(WildString[k]) != Char.ToLower(Mask[i]))
-                            return false;
-
-                        break;
-                }
-
-                i += 1;
-                k += 1;
-            }
-
-            if (k == WildString.Length)
-            {
-                if (i == Mask.Length || Mask[i] == '*')
-                    return true;
-            }
-
-            return false;
-        }
-        #endregion
     }
 }

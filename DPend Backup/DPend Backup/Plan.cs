@@ -16,6 +16,7 @@ namespace DPend_Backup
         private string[] blockFiles = new string[0];
         private string[] allowDirs = new string[] { "*" };
         private string[] blockDirs = new string[0];
+        private string[] projectFiles = new string[0];
         private DateTime lastRun = DateTime.MinValue, lastAttempt = DateTime.Now;
         private int timeSpan = 1;
         private TimeSpanType timeSpanType = TimeSpanType.Days;
@@ -24,7 +25,7 @@ namespace DPend_Backup
         private long lastFileCount = -1;
         private long lastFileSize = -1;
         private int filesToKeep = 10;
-        private PlanStatus status = PlanStatus.Created;
+        private PlanStatus status = PlanStatus.OK;
         private Log log = new Log();
         private int numWorkers = 3;
 
@@ -98,14 +99,26 @@ namespace DPend_Backup
         }
 
         /// <summary>
+        /// Gets the project file markers
+        /// </summary>
+        public string[] ProjectFiles { get { return projectFiles; } }
+        public void AddProjectFile(string Pattern)
+        {
+            List<string> tmp = new List<string>(projectFiles);
+            if (!tmp.Contains(Pattern))
+                tmp.Add(Pattern);
+            projectFiles = tmp.ToArray();
+        }
+
+        /// <summary>
         /// Gets the last time the backup was run
         /// </summary>
-        public DateTime LastRun { get { return lastRun; } }
+        public DateTime LastRun { get { return lastRun; }set { lastRun = value; } }
 
         /// <summary>
         /// Gets the last time the backup was attempted (even if it failed)
         /// </summary>
-        public DateTime LastAttmpted { get { return lastAttempt; } }
+        public DateTime LastAttmpted { get { return lastAttempt; }set { lastAttempt = value; } }
 
         /// <summary>
         /// Gets/sets the time span for this plan
@@ -145,7 +158,7 @@ namespace DPend_Backup
         /// <summary>
         /// Gets the current status of the plan
         /// </summary>
-        public PlanStatus Status { get { return status; } }
+        public PlanStatus Status { get { return status; }set { status = value; } }
 
         /// <summary>
         /// Gets the log associated with this plan
@@ -189,23 +202,22 @@ namespace DPend_Backup
                     case PlanStatus.Running:
                         return false;
                     case PlanStatus.Faults:
-                        switch (timeSpanType)
+                        switch (retryTimeSpanType)
                         {
                             case DPend_Backup.TimeSpanType.Minutes:
-                                return DateTime.Now.Subtract(lastAttempt).TotalMinutes > timeSpan;
+                                return DateTime.Now.Subtract(lastAttempt).TotalMinutes > retryTimeSpan;
                             case DPend_Backup.TimeSpanType.Hours:
-                                return DateTime.Now.Subtract(lastAttempt).TotalHours > timeSpan;
+                                return DateTime.Now.Subtract(lastAttempt).TotalHours > retryTimeSpan;
                             case DPend_Backup.TimeSpanType.Days:
-                                return DateTime.Now.Subtract(lastAttempt).TotalDays > timeSpan;
+                                return DateTime.Now.Subtract(lastAttempt).TotalDays > retryTimeSpan;
                             case DPend_Backup.TimeSpanType.Weeks:
-                                return (DateTime.Now.Subtract(lastAttempt).TotalDays / 7) > timeSpan;
+                                return (DateTime.Now.Subtract(lastAttempt).TotalDays / 7) > retryTimeSpan;
                             case DPend_Backup.TimeSpanType.Months:
                             default:
-                                return (DateTime.Now.Subtract(lastAttempt).TotalDays / 30) > timeSpan;
+                                return (DateTime.Now.Subtract(lastAttempt).TotalDays / 30) > retryTimeSpan;
                         }
-                    case PlanStatus.Created:
                     default:
-                        return true;
+                        return false;
                 }
             }
         }
@@ -228,6 +240,7 @@ namespace DPend_Backup
                 if (curLine.ToUpper().StartsWith("BLOCKFILE=")) AddBlockFile(curLine.Substring("BLOCKFILE=".Length));
                 if (curLine.ToUpper().StartsWith("ALLOWDIRECTORY=")) AddAllowDir(curLine.Substring("ALLOWDIRECTORY=".Length));
                 if (curLine.ToUpper().StartsWith("BLOCKDIRECTORY=")) AddBlockDir(curLine.Substring("BLOCKDIRECTORY=".Length));
+                if (curLine.ToUpper().StartsWith("PROJECTFILE=")) AddProjectFile(curLine.Substring("PROJECTFILE=".Length));
                 if (curLine.ToUpper().StartsWith("LASTRUN=")) lastRun = DateTime.Parse(curLine.Substring("LASTRUN=".Length));
                 if (curLine.ToUpper().StartsWith("LASTATTEMPT=")) lastAttempt = DateTime.Parse(curLine.Substring("LASTATTEMPT=".Length));
                 if (curLine.ToUpper().StartsWith("TIMESPAN=")) timeSpan = int.Parse(curLine.Substring("TIMESPAN=".Length));
@@ -265,6 +278,8 @@ namespace DPend_Backup
                 Writer.WriteLine("AllowDirectory=" + tmp);
             foreach (string tmp in blockDirs)
                 Writer.WriteLine("BlockDirectory=" + tmp);
+            foreach (string tmp in projectFiles)
+                Writer.WriteLine("ProjectFile=" + tmp);
             Writer.WriteLine("LastRun=" + lastRun.ToString());
             Writer.WriteLine("LastAttempt=" + lastAttempt.ToString());
             Writer.WriteLine("TimeSpan=" + timeSpan.ToString());

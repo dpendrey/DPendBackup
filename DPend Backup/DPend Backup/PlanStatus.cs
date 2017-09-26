@@ -7,7 +7,6 @@ namespace DPend_Backup
 {
     public enum PlanStatus : int
     {
-        Created,
         OK,
         Running,
         Faults
