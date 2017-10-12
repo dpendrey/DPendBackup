@@ -49,6 +49,8 @@ namespace DPend_Backup
 
             while (k != WildString.Length)
             {
+                if (i >= Mask.Length)
+                    return false;
                 switch (Mask[i])
                 {
                     case '*':

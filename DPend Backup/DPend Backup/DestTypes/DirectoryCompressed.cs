@@ -87,6 +87,7 @@ namespace DPend_Backup.DestTypes
                             filesRemaining.RemoveAt(i);
                             break;
                         }
+
                     if (!wasFound)
                     {
                         lastBackup = DateTime.MinValue;
@@ -96,6 +97,16 @@ namespace DPend_Backup.DestTypes
 
                 zip.Dispose();
 
+                while (filesRemaining.Count > 0)
+                {
+                    if (System.IO.File.Exists(
+                        System.IO.Path.Combine(dst, "Backup " + lastBackup.ToString("yyyy_MM_dd HH_mm_ss") + System.IO.Path.GetFileName(filesRemaining[0]))
+                        ))
+                        filesRemaining.RemoveAt(0);
+                    else
+                        break;
+                }
+
                 if (filesRemaining.Count > 0)
                     lastBackup = DateTime.MinValue;
             }
@@ -104,6 +115,8 @@ namespace DPend_Backup.DestTypes
             #region Do we need to create the zip file?
             if (lastModified > lastBackup)
             {
+
+
                 // Create zip file
                 string path = System.IO.Path.GetTempFileName();
                 string pathTo = System.IO.Path.Combine(dst, "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + ".zip");
@@ -113,65 +126,95 @@ namespace DPend_Backup.DestTypes
                 // Add each file
                 for (int i = 0; i < filesToSave.Length; i++)
                 {
-                    #region Every 250 files, close and reopen the ZIP file (this keeps memory from just growing stupidly)
-                    if (i % 250 == 0)
+                    System.IO.FileInfo info = new System.IO.FileInfo(filesToSave[i]);
+                    #region If this is a small file (under 20mb), add to the zip file
+                    if (info.Length < 20 * 1024 * 1024)
                     {
-                        zip.Dispose();
-                        zip = System.IO.Compression.ZipFile.Open(
-                            path,
-                            System.IO.Compression.ZipArchiveMode.Update);
-                    }
-                    #endregion
-                    #region Add file to .ZIP file
-                    try
-                    {
-                        System.IO.Compression.ZipArchiveEntry entry =
-                            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(
-                                zip,
-                                filesToSave[i],
-                                Worker.stripSource(Path, filesToSave[i]));
-                    }
-                    #endregion
-                    #region Catch I/O exceptions
-                    catch (System.IO.IOException)
-                    {
-                        zip.Dispose();
-                        System.IO.File.Delete(path);
-                        if (!isProject)
+                        #region Every 250 files, close and reopen the ZIP file (this keeps memory from just growing stupidly)
+                        if (i % 250 == 0)
                         {
-                            string[] subDirs = Worker.listDirs(Plan, src);
-                            NewDirectories.AddRange(subDirs);
+                            zip.Dispose();
+                            zip = System.IO.Compression.ZipFile.Open(
+                                path,
+                                System.IO.Compression.ZipArchiveMode.Update);
                         }
-                        return;
-                    }
-                    #endregion
-                    #region Catch access exceptions
-                    catch (System.UnauthorizedAccessException)
-                    {
-                        zip.Dispose();
-                        System.IO.File.Delete(path);
-                        if (!isProject)
+                        #endregion
+                        #region Add file to .ZIP file
+                        try
                         {
-                            string[] subDirs = Worker.listDirs(Plan, src);
-                            NewDirectories.AddRange(subDirs);
+                            System.IO.Compression.ZipArchiveEntry entry =
+                                System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(
+                                    zip,
+                                    filesToSave[i],
+                                    Worker.stripSource(Path, filesToSave[i]));
                         }
-                        return;
-                    }
-                    #endregion
-                    #region Catch out of memory exceptions (close and reopen .ZIP file)
-                    catch (OutOfMemoryException)
-                    {
-                        zip.Dispose();
-                        zip = System.IO.Compression.ZipFile.Open(
-                            path,
-                            System.IO.Compression.ZipArchiveMode.Update);
+                        #endregion
+                        #region Catch I/O exceptions
+                        catch (System.IO.IOException)
+                        {
+                            zip.Dispose();
+                            System.IO.File.Delete(path);
+                            if (!isProject)
+                            {
+                                string[] subDirs = Worker.listDirs(Plan, src);
+                                NewDirectories.AddRange(subDirs);
+                            }
+                            return;
+                        }
+                        #endregion
+                        #region Catch access exceptions
+                        catch (System.UnauthorizedAccessException)
+                        {
+                            zip.Dispose();
+                            System.IO.File.Delete(path);
+                            if (!isProject)
+                            {
+                                string[] subDirs = Worker.listDirs(Plan, src);
+                                NewDirectories.AddRange(subDirs);
+                            }
+                            return;
+                        }
+                        #endregion
+                        #region Catch out of memory exceptions (close and reopen .ZIP file)
+                        catch (OutOfMemoryException)
+                        {
+                            zip.Dispose();
+                            zip = System.IO.Compression.ZipFile.Open(
+                                path,
+                                System.IO.Compression.ZipArchiveMode.Update);
 
-                        System.IO.Compression.ZipArchiveEntry entry =
-                            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(
-                                zip,
-                                filesToSave[i],
-                                Worker.stripSource(Path, filesToSave[i]),
-                                 System.IO.Compression.CompressionLevel.NoCompression);
+                            System.IO.Compression.ZipArchiveEntry entry =
+                                System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(
+                                    zip,
+                                    filesToSave[i],
+                                    Worker.stripSource(Path, filesToSave[i]),
+                                     System.IO.Compression.CompressionLevel.NoCompression);
+                        }
+                        #endregion
+                    }
+                    #endregion
+                    #region IF this is a large file, copy as is
+                    else
+                    {
+                        if (!System.IO.Directory.Exists(
+                            System.IO.Path.GetDirectoryName(pathTo)))
+                            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(pathTo));
+
+                        if (System.IO.File.Exists(System.IO.Path.GetDirectoryName(pathTo)))
+                            System.IO.File.Delete(System.IO.Path.GetDirectoryName(pathTo));
+
+                        System.IO.File.Copy(
+                            filesToSave[i],
+                            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(pathTo), "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + info.Name + ".tmp")
+                            );
+
+                        if (System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(pathTo), "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + info.Name)))
+                            System.IO.File.Delete(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(pathTo), "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + info.Name));
+
+                        System.IO.File.Move(
+                            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(pathTo), "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + info.Name + ".tmp"),
+                            System.IO.Path.Combine(System.IO.Path.GetDirectoryName(pathTo), "Backup " + Plan.LastAttmpted.ToString("yyyy_MM_dd HH_mm_ss") + info.Name)
+                            );
                     }
                     #endregion
                 }
