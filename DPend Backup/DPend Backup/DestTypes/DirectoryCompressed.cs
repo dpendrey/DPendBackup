@@ -72,30 +72,42 @@ namespace DPend_Backup.DestTypes
             #region Compare list of files in folder vs. list of files in latest .ZIP file
             if (lastBackup != DateTime.MinValue)
             {
-                System.IO.Compression.ZipArchive zip = System.IO.Compression.ZipFile.Open(
-                    System.IO.Path.Combine(dst, "Backup " + lastBackup.ToString("yyyy_MM_dd HH_mm_ss") + ".zip"),
-                    System.IO.Compression.ZipArchiveMode.Read);
                 List<string> filesRemaining = new List<string>(filesToSave);
-
-                foreach (System.IO.Compression.ZipArchiveEntry entry in zip.Entries)
+                try
                 {
-                    bool wasFound = false;
-                    for (int i = 0; i < filesRemaining.Count; i++)
-                        if (entry.FullName.ToUpper() == Worker.stripSource(Path, filesRemaining[i].ToUpper()))
+                    System.IO.Compression.ZipArchive zip = System.IO.Compression.ZipFile.Open(
+                        System.IO.Path.Combine(dst, "Backup " + lastBackup.ToString("yyyy_MM_dd HH_mm_ss") + ".zip"),
+                        System.IO.Compression.ZipArchiveMode.Read);
+
+                    foreach (System.IO.Compression.ZipArchiveEntry entry in zip.Entries)
+                    {
+                        bool wasFound = false;
+                        for (int i = 0; i < filesRemaining.Count; i++)
+                            if (entry.FullName.ToUpper() == Worker.stripSource(Path, filesRemaining[i].ToUpper()))
+                            {
+                                wasFound = true;
+                                filesRemaining.RemoveAt(i);
+                                break;
+                            }
+
+                        if (!wasFound)
                         {
-                            wasFound = true;
-                            filesRemaining.RemoveAt(i);
+                            lastBackup = DateTime.MinValue;
                             break;
                         }
-
-                    if (!wasFound)
-                    {
-                        lastBackup = DateTime.MinValue;
-                        break;
                     }
-                }
 
-                zip.Dispose();
+                    zip.Dispose();
+                }
+                catch (Exception e)
+                {
+                    if (e.Message == "Central Directory corrupt.")
+                    {
+                        System.IO.File.Delete(System.IO.Path.Combine(dst, "Backup " + lastBackup.ToString("yyyy_MM_dd HH_mm_ss") + ".zip"));
+                    }
+                    else
+                        throw e;
+                }
 
                 while (filesRemaining.Count > 0)
                 {
